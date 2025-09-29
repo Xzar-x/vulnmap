@@ -30,18 +30,18 @@ DRY_RUN = "-d" in sys.argv or "--dry-run" in sys.argv
 NONINTERACTIVE = "-n" in sys.argv or "--non-interactive" in sys.argv
 IS_ROOT = os.geteuid() == 0
 
-# Zależności systemowe i narzędzia
-SYSTEM_DEPS = ["go", "python3", "pip3", "nmap", "sqlmap", "ruby", "gem"]
+SYSTEM_DEPS = ["go", "python3", "pip3", "nmap", "sqlmap", "ruby", "gem", "git"]
 GO_TOOLS = {
     "nuclei": "github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest",
     "httpx": "github.com/projectdiscovery/httpx/cmd/httpx@latest",
     "dalfox": "github.com/hahwul/dalfox/v2@latest",
 }
 PYTHON_PKGS = ["rich", "questionary", "pyfiglet", "typer", "requests"]
-# Uwaga: wpscan i testssl.sh mają niestandardowe instalacje
+
+# ZMIANA: Bardziej strukturalna definicja, aby wiedzieć co wymaga sudo
 CUSTOM_INSTALLS = {
-    "wpscan": "gem install wpscan",
-    "testssl.sh": f"git clone --depth 1 https://github.com/drwetter/testssl.sh.git {SHARE_DIR}/testssl.sh"
+    "wpscan": {"command": "gem install wpscan", "needs_sudo": True},
+    "testssl.sh": {"command": f"git clone --depth 1 https://github.com/drwetter/testssl.sh.git {os.path.join(SHARE_DIR, 'testssl.sh')}", "needs_sudo": True}
 }
 
 def display_banner():
@@ -49,11 +49,19 @@ def display_banner():
     banner_text = f.renderText("VulnMap\nInstaller")
     console.print(Align.center(Text(banner_text, style="bold magenta")))
 
-def run_command(command, description, sudo=False, live_output=False, shell=False):
-    sudo_prefix = ["sudo"] if sudo and not IS_ROOT else []
-    # Jeśli shell=True, komenda jest stringiem, w przeciwnym razie listą
-    full_command = ' '.join(sudo_prefix + command) if shell else sudo_prefix + command
-    cmd_str = full_command if isinstance(full_command, str) else ' '.join(full_command)
+def run_command(command, description, sudo=False, live_output=False):
+    is_string_cmd = isinstance(command, str)
+    shell = is_string_cmd
+
+    if sudo and not IS_ROOT:
+        if is_string_cmd:
+            full_command = f"sudo {command}"
+        else:
+            full_command = ["sudo"] + command
+    else:
+        full_command = command
+        
+    cmd_str = full_command if is_string_cmd else ' '.join(full_command)
     
     if DRY_RUN:
         console.print(Align.center(f"[blue]DRY RUN[/blue] Wykonuję: {cmd_str}"))
@@ -61,21 +69,21 @@ def run_command(command, description, sudo=False, live_output=False, shell=False
 
     console.print(Align.center(f"-> [yellow]Uruchamiam:[/yellow] {description} ([dim]{cmd_str}[/dim])"))
     try:
-        # Użyj Popen dla live output
         process = subprocess.Popen(
             full_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, universal_newlines=True, shell=shell
         )
-        for line in process.stdout:
-            if live_output:
-                console.print(Align.center(f"[dim]  {line.strip()}[/dim]"))
+        if process.stdout:
+            for line in process.stdout:
+                if live_output:
+                    console.print(Align.center(f"[dim]  {line.strip()}[/dim]"))
         process.wait()
         if process.returncode != 0:
             console.print(Align.center(f"[red]Błąd[/red] podczas '{description}': Kod {process.returncode}"))
             return False
         return True
     except FileNotFoundError:
-        cmd_name = full_command.split()[0] if isinstance(full_command, str) else full_command[0]
+        cmd_name = full_command.split()[0] if is_string_cmd else full_command[0]
         console.print(Align.center(f"[red]Błąd[/red]: Polecenie '{cmd_name}' nie znalezione."))
         return False
     except Exception as e:
@@ -83,28 +91,22 @@ def run_command(command, description, sudo=False, live_output=False, shell=False
         return False
 
 def check_dependencies():
+    # ... (bez zmian w tej funkcji) ...
     missing_system, missing_go, missing_custom = [], [], []
-    
     deps = {"Zależności Systemowe": (SYSTEM_DEPS, missing_system), "Narzędzia Go": (GO_TOOLS.keys(), missing_go), "Narzędzia Niestandardowe": (CUSTOM_INSTALLS.keys(), missing_custom)}
     tables = []
-    
     for title, (dep_list, missing_list) in deps.items():
         table = Table(title=title, box=box.ROUNDED, show_header=True, header_style="bold cyan", title_justify="left")
         table.add_column("Narzędzie", style="magenta")
         table.add_column("Status", justify="center")
-        
         for dep in dep_list:
-            # Specjalna logika dla testssl.sh
-            check_path = os.path.join(SHARE_DIR, "testssl.sh/testssl.sh") if dep == "testssl.sh" else dep
+            check_path = os.path.join(SHARE_DIR, "testssl.sh", "testssl.sh") if dep == "testssl.sh" else dep
             status_ok = os.path.exists(check_path) if dep == "testssl.sh" else shutil.which(dep)
-            
-            if status_ok:
-                table.add_row(dep, "[bold green]✓ ZNALEZIONO[/bold green]")
+            if status_ok: table.add_row(dep, "[bold green]✓ ZNALEZIONO[/bold green]")
             else:
                 table.add_row(dep, "[bold red]✗ BRAK[/bold red]")
                 missing_list.append(dep)
         tables.append(table)
-
     grid = Columns(tables, align="center", expand=True)
     console.print(Align.center(grid))
     return missing_system, missing_go, missing_custom
@@ -112,6 +114,30 @@ def check_dependencies():
 def main():
     display_banner()
     console.print(Align.center(Panel.fit("[bold]Instalator VulnMap sprawdzi i zainstaluje zależności.[/bold]", border_style="green")))
+    
+    # NOWA SEKCJA: Sprawdzanie i prośba o uprawnienia sudo na początku
+    if not IS_ROOT:
+        # Sprawdzamy, czy jakiekolwiek operacje będą wymagały sudo
+        # (kopiowanie, instalacja systemowa, niektóre instalacje customowe)
+        needs_sudo_check = True # Uproszczenie - zakładamy, że zawsze może być potrzebne
+        if needs_sudo_check:
+            info_panel = Panel(
+                Text.from_markup(
+                    "Niektóre operacje (np. instalacja pakietów, kopiowanie do /usr/local/bin) wymagają uprawnień administratora.\n"
+                    "Skrypt poprosi o hasło `sudo` teraz, aby zautomatyzować resztę procesu.",
+                    justify="center"
+                ),
+                title="[bold yellow]Wymagane uprawnienia Sudo[/bold yellow]",
+                border_style="yellow"
+            )
+            console.print(Align.center(info_panel))
+            if not run_command(["sudo", "-v"], "Weryfikacja uprawnień sudo..."):
+                console.print("[red]Błąd: Nie udało się zweryfikować uprawnień sudo. Przerwano.[/red]")
+                sys.exit(1)
+
+    testssl_dir = os.path.join(SHARE_DIR, 'testssl.sh')
+    if os.path.exists(testssl_dir) and not os.path.exists(os.path.join(testssl_dir, 'testssl.sh')):
+         run_command(['rm', '-rf', testssl_dir], 'Czyszczenie nieudanej instalacji testssl.sh', sudo=True)
 
     missing_system, missing_go, missing_custom = check_dependencies()
 
@@ -129,7 +155,8 @@ def main():
                     run_command(["go", "install", "-v", GO_TOOLS[tool]], f"Instalacja {tool}", live_output=True)
             if missing_custom:
                 for tool in missing_custom:
-                    run_command(CUSTOM_INSTALLS[tool].split(), f"Instalacja {tool}", sudo= ("gem" in CUSTOM_INSTALLS[tool]), live_output=True, shell=("git" in CUSTOM_INSTALLS[tool]))
+                    tool_info = CUSTOM_INSTALLS[tool]
+                    run_command(tool_info["command"], f"Instalacja {tool}", sudo=tool_info["needs_sudo"], live_output=True)
 
     console.print(Align.center("\n[blue]Instaluję/aktualizuję pakiety Python...[/blue]"))
     run_command(["pip3", "install", "--upgrade"] + PYTHON_PKGS, "Instalacja pakietów pip", live_output=True)
@@ -141,8 +168,7 @@ def main():
     run_command(["cp", os.path.join(base_dir, "vulnmap.py"), os.path.join(BIN_DIR, "vulnmap")], "Kopiowanie głównego skryptu", sudo=True)
     run_command(["chmod", "+x", os.path.join(BIN_DIR, "vulnmap")], "Nadawanie uprawnień wykonywalnych", sudo=True)
     
-    # Lista plików do skopiowania w przyszłości
-    files_to_copy = ["vulnmap_config.py", "vulnmap_utils.py", "vulnmap_report_template.html"]
+    files_to_copy = ["vulnmap_config.py", "vulnmap_utils.py", "vulnmap_report_template.html", "phase0_ingest.py", "phase1_passive.py", "phase2_active_app.py", "phase3_infra.py", "waf_evasion.py"]
     for f_name in files_to_copy:
         src = os.path.join(base_dir, f_name)
         if os.path.exists(src):
@@ -153,4 +179,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
