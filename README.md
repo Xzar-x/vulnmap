@@ -7,6 +7,5 @@
 </h1>
 
 <p align="center">
-  Ten projekt jest obecnie w trakcie aktywnego rozwoju. <br>
-  Wróć tu później, aby zobaczyć efekty!
+This project is currently under active development.<br>Come back later to see the results!
 </p>
