@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="under_construction.png" alt="Under Construction Image" />
+  <img src="https://raw.githubusercontent.com/Xzar-x/images/refs/heads/main/under_construction.jpg" alt="Under Construction Image" />
 </p>
 
 <h1 align="center">
