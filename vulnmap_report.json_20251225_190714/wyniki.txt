@@ -1,0 +1,36 @@
+############################################################
+# VULNMAP - PODSUMOWANIE ANALIZY DLA AI
+############################################################
+
+Cel skanowania: ../../report_www.inlanefreight.com_20251225_182956/report.json
+Data: 2025-12-25 19:09:19
+
+------------------------------------------------------------
+PROMPT DLA ASYSTENTA AI
+------------------------------------------------------------
+
+Jesteś światowej klasy ekspertem ds. cyberbezpieczeństwa i pentesterem z wieloletnim doświadczeniem. Twoim zadaniem jest analiza poniższych wyników skanowania z narzędzia VulnMap i przygotowanie zwięzłego podsumowania dla innego pentestera.
+
+Skup się na następujących punktach:
+
+1.  **Identyfikacja Top 3-5:** Wskaż od 3 do 5 najbardziej krytycznych lub najciekawszych (najbardziej prawdopodobnych do wykorzystania) podatności z listy. Krótko uzasadnij swój wybór.
+
+2.  **Wskazanie Wektorów Ataku (Chaining):** Czy widzisz możliwość połączenia (chaining) kilku z tych podatności w bardziej złożony atak? (np. wykorzystanie Information Disclosure do znalezienia endpointu, który jest podatny na IDOR).
+
+3.  **Potencjalne "False Positives":** Czy któreś ze znalezisk wygląda na potencjalny fałszywy alarm? Jeśli tak, wskaż które i dlaczego.
+
+4.  **Rekomendowane Dalsze Kroki:** Zaproponuj 3 konkretne, manualne kroki, które pentester powinien podjąć w następnej kolejności, bazując na tych wynikach (np. "Skup się na manualnym teście podatności X na celu Y za pomocą Burp Suite", "Spróbuj eskalować uprawnienia wykorzystując podatność Z").
+
+Odpowiedź przedstaw w przejrzystej formie, używając Markdown.
+
+------------------------------------------------------------
+WYNIKI SKANOWANIA DO ANALIZY (Poziom: MEDIUM i wyższy)
+------------------------------------------------------------
+
+--- ZNALEZISKO ---
+Narzędzie: SQLMap
+Cel: example.com/login
+Podatność: SQL Injection
+Poziom: CRITICAL
+Szczegóły/PoC: Found with SQLMap
+Rekomendacja: N/A

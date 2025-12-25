@@ -6,7 +6,17 @@ from typing import Dict, List, Optional
 # --- Ścieżki i stałe ---
 SHARE_DIR = "/usr/local/share/vulnmap/"
 HTML_TEMPLATE_PATH = os.path.join(SHARE_DIR, "vulnmap_report_template.html")
-NUCLEI_TEMPLATES_DIR = os.path.expanduser("~/nuclei-templates")
+
+# Inteligentne wykrywanie ścieżki do szablonów Nuclei
+# Sprawdzamy standardowe lokalizacje, zaczynając od tej z logów użytkownika (.local)
+_POSSIBLE_TEMPLATE_PATHS = [
+    os.path.expanduser("~/.local/nuclei-templates"), # Nowy domyślny standard dla instalacji user-scope
+    os.path.expanduser("~/nuclei-templates"),        # Stary standard
+    "/root/nuclei-templates",                        # Częste dla roota/Kal
+    "/usr/local/share/nuclei-templates"              # System-wide
+]
+
+NUCLEI_TEMPLATES_DIR = next((path for path in _POSSIBLE_TEMPLATE_PATHS if os.path.exists(path)), os.path.expanduser("~/nuclei-templates"))
 
 # --- Globalne zmienne stanu i konfiguracji ---
 LOG_FILE: Optional[str] = None

@@ -3,6 +3,7 @@
 import datetime
 import json
 import os
+import re  # <--- Naprawiono: Dodano brakujący import
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -143,6 +144,7 @@ def main(
     config.TARGET_INPUT = target or input_file
     
     report_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    # Tutaj był błąd - brakowało importu re, teraz już jest naprawione.
     sanitized_target = re.sub(r'[^a-zA-Z0-9.-]', '_', config.TARGET_INPUT.split('/')[-1])
     config.REPORT_DIR = os.path.join(output_dir, f"vulnmap_{sanitized_target}_{report_time}")
     os.makedirs(config.REPORT_DIR, exist_ok=True)

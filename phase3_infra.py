@@ -11,6 +11,23 @@ import vulnmap_config as config
 import vulnmap_utils as utils
 from rich.panel import Panel
 
+# Importujemy funkcję pomocniczą z Phase 1 jeśli jest dostępna, lub definiujemy lokalnie
+# Dla pewności i autonomii pliku, zdefiniujemy prostą wersję tutaj.
+def _get_template_path_infra(category: str) -> str:
+    """Zwraca ścieżkę do szablonu, obsługując różne wersje struktury katalogów."""
+    # Struktura v10 (często w root lub http/network)
+    paths_to_check = [
+        os.path.join(config.NUCLEI_TEMPLATES_DIR, category),
+        os.path.join(config.NUCLEI_TEMPLATES_DIR, "http", category), # Niektóre mogą być w http
+        os.path.join(config.NUCLEI_TEMPLATES_DIR, "network", category) # Dla specyficznych sieciowych
+    ]
+    
+    for p in paths_to_check:
+        if os.path.exists(p):
+            return p
+            
+    return category # Fallback
+
 def _parse_nmap_vuln_output(nmap_output: str) -> List[Dict[str, Any]]:
     """Bardzo podstawowy parser dla skryptów Nmap --script=vuln."""
     findings = []
@@ -79,19 +96,31 @@ def _run_nuclei_infra(hosts_with_ports: Dict[str, List[Dict]]) -> List[Dict[str,
 
     output_file = os.path.join(config.REPORT_DIR, "nuclei_infra_results.json")
     
+    # Budowanie listy szablonów
+    categories = ["network", "ssl", "dns", "file"]
+    templates_args = []
+    for cat in categories:
+        path = _get_template_path_infra(cat)
+        if os.path.exists(path):
+            templates_args.extend(["-t", path])
+    
+    # Jeśli nie znaleźliśmy ścieżek, użyj nazw domyślnych
+    if not templates_args:
+         templates_args = ["-t", "network/", "-t", "ssl/", "-t", "dns/"]
+
     command = [
         "nuclei",
         "-l", targets_file,
-        "-t", "network/", "ssl/", "dns/", "file/", # Przykładowe szablony infra
         "-json", "-o", output_file,
         "-silent",
         "-rate-limit", str(config.NUCLEI_RATE_LIMIT_SAFE if config.SAFE_MODE else config.NUCLEI_RATE_LIMIT)
-    ]
+    ] + templates_args
     
     try:
+        utils.log_and_echo(f"Komenda Nuclei (Infra): {' '.join(command)}", "DEBUG")
         subprocess.run(command, timeout=config.TOOL_TIMEOUT_SECONDS)
-        # Możemy użyć tej samej funkcji co w phase1_passive, ale dla czystości kodu jest tu zduplikowana
-        # W przyszłości można ją przenieść do vulnmap_utils
+        
+        # Import parsera (dla czystości)
         from phase1_passive import _parse_nuclei_output
         findings = _parse_nuclei_output(output_file)
         utils.log_and_echo(f"Nuclei (infra) zakończył. Znaleziono {len(findings)} potencjalnych problemów.", "INFO")
@@ -101,7 +130,8 @@ def _run_nuclei_infra(hosts_with_ports: Dict[str, List[Dict]]) -> List[Dict[str,
     except Exception as e:
         utils.log_and_echo(f"Błąd podczas skanowania Nuclei (infra): {e}", "ERROR")
     finally:
-        os.remove(targets_file)
+        if os.path.exists(targets_file):
+            os.remove(targets_file)
         
     return []
 
