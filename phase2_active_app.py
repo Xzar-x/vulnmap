@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import time
 import re
@@ -13,8 +14,8 @@ import waf_evasion
 from rich.panel import Panel
 from vulnmap_utils import WafHealthMonitor, WafStatus
 
-# Stałe ścieżki
-LFIMAP_PATH = os.path.join(config.SHARE_DIR, "lfimap", "lfimap.py")
+# Stała ścieżka (Jako fallback, jeśli komenda globalna nie istnieje)
+LFIMAP_PATH_FALLBACK = os.path.join(config.SHARE_DIR, "lfimap", "lfimap.py")
 
 
 def _check_waf_and_sleep(waf_monitor: WafHealthMonitor, tool_name: str) -> bool:
@@ -27,7 +28,7 @@ def _check_waf_and_sleep(waf_monitor: WafHealthMonitor, tool_name: str) -> bool:
 
     # 2. Sprawdzenie stanu monitora
     status = waf_monitor.get_status()
-    
+
     if status == WafStatus.RED:
         utils.log_and_echo(
             f"[{tool_name}] WAF ZABLOKOWANY (RED)! Wstrzymuję działanie...", "ERROR"
@@ -35,14 +36,18 @@ def _check_waf_and_sleep(waf_monitor: WafHealthMonitor, tool_name: str) -> bool:
         # Pętla oczekiwania na zdjęcie blokady
         while waf_monitor.get_status() == WafStatus.RED:
             time.sleep(30)
-        utils.log_and_echo(f"[{tool_name}] WAF Status wrócił do normy. Wznawiam.", "INFO")
+        utils.log_and_echo(
+            f"[{tool_name}] WAF Status wrócił do normy. Wznawiam.", "INFO"
+        )
         return True
 
     if status == WafStatus.YELLOW:
-        utils.log_and_echo(f"[{tool_name}] WAF PODEJRZANY (YELLOW). Zwalniam dwukrotnie.", "WARN")
+        utils.log_and_echo(
+            f"[{tool_name}] WAF PODEJRZANY (YELLOW). Zwalniam dwukrotnie.", "WARN"
+        )
         # Dodatkowe opóźnienie w przypadku problemów
         time.sleep(config.WAF_CHECK_INTERVAL_MAX_SAFE)
-    
+
     return True
 
 
@@ -51,11 +56,19 @@ def _detect_potential_idor(targets: List[str]) -> List[Dict[str, Any]]:
     findings = []
     # Wzorce parametrów sugerujące IDOR
     idor_patterns = [
-        r"id=", r"user_id=", r"account=", r"invoice=", 
-        r"order_num=", r"profile_id=", r"doc_id=", r"customer="
+        r"id=",
+        r"user_id=",
+        r"account=",
+        r"invoice=",
+        r"order_num=",
+        r"profile_id=",
+        r"doc_id=",
+        r"customer=",
     ]
 
     suspicious_urls = []
+
+    # Szybka analiza
     for url in targets:
         for pattern in idor_patterns:
             if re.search(pattern, url, re.IGNORECASE):
@@ -85,72 +98,92 @@ def _orchestrate_wpscan(
 ) -> List[Dict[str, Any]]:
     """Uruchamia WPScan tylko jeśli wykryto WordPressa."""
     findings = []
-    
+
     is_wp = any("wordpress" in tech.lower() for tech in technologies)
     if not is_wp:
         return []
 
     utils.log_and_echo("Wykryto WordPress. Uruchamiam WPScan (Stealth Mode)...", "INFO")
 
-    for url in root_urls:
-        if not _check_waf_and_sleep(waf_monitor, "WPScan"):
-            continue
+    # Spinner dla WPScan
+    with utils.console.status(
+        "[bold green]WPScan analizuje instancję WordPress...[/bold green]",
+        spinner="dots",
+    ):
+        for url in root_urls:
+            if not _check_waf_and_sleep(waf_monitor, "WPScan"):
+                continue
 
-        # Generowanie nagłówków dla spójności
-        headers = waf_evasion.get_random_browser_headers(url)
-        ua = headers.get("User-Agent", "Mozilla/5.0")
+            # Generowanie nagłówków dla spójności
+            headers = waf_evasion.get_random_browser_headers(url)
+            ua = headers.get("User-Agent", "Mozilla/5.0")
 
-        command = [
-            "wpscan",
-            "--url", url,
-            "--enumerate", "p,t,u",
-            "--format", "json",
-            "--user-agent", ua,
-            "--disable-tls-checks",
-            "--random-user-agent" # WPScan ma wbudowaną rotację, ale nadpisujemy naszym głównym
-        ]
+            command = [
+                "wpscan",
+                "--url",
+                url,
+                "--enumerate",
+                "p,t,u",
+                "--format",
+                "json",
+                "--user-agent",
+                ua,
+                "--disable-tls-checks",
+                "--random-user-agent",  # WPScan ma wbudowaną rotację, ale nadpisujemy naszym głównym
+            ]
 
-        # W trybie bezpiecznym zwalniamy drastycznie
-        if config.SAFE_MODE:
-            command.extend(["--throttle", "5000"])  # 5 sekund między żądaniami
-            command.extend(["--stealthy"])
-        else:
-            command.extend(["--throttle", "1000"])
+            # W trybie bezpiecznym zwalniamy drastycznie
+            if config.SAFE_MODE:
+                command.extend(["--throttle", "5000"])  # 5 sekund między żądaniami
+                command.extend(["--stealthy"])
+            else:
+                command.extend(["--throttle", "1000"])
 
-        try:
-            process = subprocess.run(
-                command, capture_output=True, text=True, timeout=config.TOOL_TIMEOUT_SECONDS
-            )
+            # NOWOŚĆ: Logowanie komendy
+            cmd_str = " ".join(command)
+            utils.log_and_echo(f"Komenda WPScan: {cmd_str}", "INFO")
+
             try:
-                data = json.loads(process.stdout)
-                
-                # Tylko interesujące znaleziska
-                if "users" in data and data["users"]:
-                    usernames = [u.get("name") for u in data["users"].values()]
-                    findings.append({
-                        "vulnerability": "WordPress User Enumeration",
-                        "severity": "medium",
-                        "target": url,
-                        "details": f"Found users: {', '.join(usernames)}",
-                        "remediation": "Disable REST API user enumeration.",
-                        "source": "WPScan",
-                    })
+                process = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=config.TOOL_TIMEOUT_SECONDS,
+                )
+                try:
+                    data = json.loads(process.stdout)
 
-                version = data.get("version", {}).get("number")
-                if version:
-                    findings.append({
-                        "vulnerability": f"WordPress Version ({version})",
-                        "severity": "info",
-                        "target": url,
-                        "details": f"Detected version: {version}",
-                        "remediation": "Ensure WP is up to date.",
-                        "source": "WPScan",
-                    })
+                    # Tylko interesujące znaleziska
+                    if "users" in data and data["users"]:
+                        usernames = [u.get("name") for u in data["users"].values()]
+                        findings.append(
+                            {
+                                "vulnerability": "WordPress User Enumeration",
+                                "severity": "medium",
+                                "target": url,
+                                "details": f"Found users: {', '.join(usernames)}",
+                                "remediation": "Disable REST API user enumeration.",
+                                "source": "WPScan",
+                            }
+                        )
 
-            except json.JSONDecodeError:
-                pass
-        except Exception as e:
-            utils.log_and_echo(f"Błąd WPScan: {e}", "DEBUG")
+                    version = data.get("version", {}).get("number")
+                    if version:
+                        findings.append(
+                            {
+                                "vulnerability": f"WordPress Version ({version})",
+                                "severity": "info",
+                                "target": url,
+                                "details": f"Detected version: {version}",
+                                "remediation": "Ensure WP is up to date.",
+                                "source": "WPScan",
+                            }
+                        )
+
+                except json.JSONDecodeError:
+                    pass
+            except Exception as e:
+                utils.log_and_echo(f"Błąd WPScan: {e}", "DEBUG")
 
     return findings
 
@@ -167,21 +200,30 @@ def _orchestrate_dalfox(
 
     # Dalfox w trybie pipe jest szybki, ale niebezpieczny dla WAF.
     # W trybie SAFE musimy ograniczyć współbieżność.
-    
+
     # Przygotowanie celów (tylko te z parametrami)
     targets_str = "\n".join(targets)
 
-    delay_ms = int(config.REQUEST_DELAY_SAFE * 1000) if config.SAFE_MODE else int(config.REQUEST_DELAY_NORMAL * 1000)
+    delay_ms = (
+        int(config.REQUEST_DELAY_SAFE * 1000)
+        if config.SAFE_MODE
+        else int(config.REQUEST_DELAY_NORMAL * 1000)
+    )
     workers = 1 if config.SAFE_MODE else 2
 
     command = [
-        "dalfox", "pipe",
-        "--format", "json",
+        "dalfox",
+        "pipe",
+        "--format",
+        "json",
         "--silence",
         "--skip-mining-dom",
-        "--ignore-return", "302,403,404,500,503", # Ignoruj błędy WAF/Server
-        "--delay", str(delay_ms),
-        "--worker", str(workers)
+        "--ignore-return",
+        "302,403,404,500,503",  # Ignoruj błędy WAF/Server
+        "--delay",
+        str(delay_ms),
+        "--worker",
+        str(workers),
     ]
 
     # Wstrzykiwanie nagłówków z waf_evasion
@@ -189,24 +231,30 @@ def _orchestrate_dalfox(
     for k, v in headers.items():
         command.extend(["--header", f"{k}: {v}"])
         if k == "User-Agent":
-             command.extend(["--user-agent", v])
-
-    # Cookie (jeśli zdefiniowane w env lub configu, tu placeholder)
-    # command.extend(["--cookie", "session=..."])
+            command.extend(["--user-agent", v])
 
     _check_waf_and_sleep(waf_monitor, "Dalfox-Init")
 
+    # NOWOŚĆ: Logowanie komendy (bez wstrzykiwanych danych stdin)
+    cmd_str = " ".join(command)
+    utils.log_and_echo(f"Komenda Dalfox (stdin=target_list): {cmd_str}", "INFO")
+
     try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        stdout, stderr = process.communicate(
-            input=targets_str, timeout=config.TOOL_TIMEOUT_SECONDS
-        )
+        # Spinner dla Dalfox
+        with utils.console.status(
+            "[bold green]Dalfox szuka XSS (Low & Slow)...[/bold green]",
+            spinner="bouncingBar",
+        ):
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            stdout, stderr = process.communicate(
+                input=targets_str, timeout=config.TOOL_TIMEOUT_SECONDS
+            )
 
         for line in stdout.splitlines():
             try:
@@ -236,56 +284,102 @@ def _orchestrate_dalfox(
 def _orchestrate_lfimap(
     targets: List[str], waf_monitor: WafHealthMonitor
 ) -> List[Dict[str, Any]]:
-    """Uruchamia LFIMap z opóźnieniami."""
+    """Uruchamia LFIMap z opóźnieniami i obsługą błędów."""
     findings = []
-    if not targets or not os.path.exists(LFIMAP_PATH):
-        if not os.path.exists(LFIMAP_PATH):
-            utils.log_and_echo("LFIMap brak. Pomiń.", "WARN")
+
+    # 1. Detekcja LFIMap (Systemowa komenda ma priorytet)
+    use_system_cmd = False
+    if shutil.which("lfimap"):
+        use_system_cmd = True
+    elif os.path.exists(LFIMAP_PATH_FALLBACK):
+        use_system_cmd = False
+    else:
+        # Jeśli nie ma ani komendy, ani pliku
+        if targets:
+            utils.log_and_echo(
+                "LFIMap nie znaleziony (brak komendy 'lfimap' i pliku skryptu). Pomiń.",
+                "WARN",
+            )
         return []
 
-    utils.log_and_echo("Skanowanie LFI...", "INFO")
-    
+    utils.log_and_echo("Skanowanie LFI (LFIMap)...", "INFO")
+
     # Ograniczenie liczby celów
     limit = 3 if config.SAFE_MODE else 10
     targets_to_scan = targets[:limit]
 
-    for url in targets_to_scan:
-        if not _check_waf_and_sleep(waf_monitor, "LFIMap"):
-            continue
+    # Przygotowanie środowiska (wyciszenie Warningów Pythona z LFIMap)
+    env = os.environ.copy()
+    env["PYTHONWARNINGS"] = "ignore"
 
-        delay_ms = int(config.REQUEST_DELAY_SAFE * 1000) if config.SAFE_MODE else 500
-        
-        # Generowanie nagłówków
-        headers = waf_evasion.get_random_browser_headers(url)
-        ua = headers.get("User-Agent")
+    # Spinner dla LFIMap
+    with utils.console.status(
+        f"[bold green]LFIMap sprawdza {len(targets_to_scan)} celów...[/bold green]",
+        spinner="material",
+    ):
+        for url in targets_to_scan:
+            if not _check_waf_and_sleep(waf_monitor, "LFIMap"):
+                continue
 
-        # LFIMap argumenty
-        command = [
-            "python3", LFIMAP_PATH,
-            "-U", url,
-            "--no-stop",
-            "--delay", str(delay_ms),
-            "-a", ua # User-Agent
-        ]
-
-        try:
-            process = subprocess.run(
-                command, capture_output=True, text=True, timeout=300
+            delay_ms = (
+                int(config.REQUEST_DELAY_SAFE * 1000) if config.SAFE_MODE else 500
             )
-            # Proste parsowanie
-            if "[+]" in process.stdout:
-                vuln_lines = [l.strip() for l in process.stdout.splitlines() if "[+]" in l]
+
+            # Generowanie nagłówków
+            headers = waf_evasion.get_random_browser_headers(url)
+            ua = headers.get("User-Agent", "VulnMap")
+
+            # Budowanie komendy
+            if use_system_cmd:
+                base_cmd = ["lfimap"]
+            else:
+                base_cmd = ["python3", LFIMAP_PATH_FALLBACK]
+
+            command = base_cmd + [
+                "-U",
+                url,
+                "--no-stop",
+                "--delay",
+                str(delay_ms),
+                "-a",
+                ua,  # User-Agent
+                "--no-color",  # Ułatwia parsowanie
+            ]
+
+            # NOWOŚĆ: Logowanie komendy
+            cmd_str = " ".join(command)
+            utils.log_and_echo(f"Komenda LFIMap: {cmd_str}", "INFO")
+
+            try:
+                # Używamy env do wyciszenia SyntaxWarning
+                process = subprocess.run(
+                    command, capture_output=True, text=True, timeout=300, env=env
+                )
+
+                # Proste parsowanie outputu
+                # Szukamy linii zaczynających się od [+] lub [!]
+                output_lines = process.stdout.splitlines()
+                vuln_lines = []
+                for l in output_lines:
+                    clean_l = l.strip()
+                    if "[+]" in clean_l and "Vulnerability identified" not in clean_l:
+                        vuln_lines.append(clean_l)
+                    elif "LFI" in clean_l and "identified" in clean_l:
+                        vuln_lines.append(clean_l)
+
                 if vuln_lines:
-                    findings.append({
-                        "vulnerability": "Local File Inclusion (LFI)",
-                        "severity": "critical",
-                        "target": url,
-                        "details": "\n".join(vuln_lines[:3]),
-                        "remediation": "Validate filenames against allowlist.",
-                        "source": "LFIMap",
-                    })
-        except Exception:
-            pass
+                    findings.append(
+                        {
+                            "vulnerability": "Local File Inclusion (LFI)",
+                            "severity": "critical",
+                            "target": url,
+                            "details": "\n".join(vuln_lines[:5]),  # Max 5 linii dowodu
+                            "remediation": "Validate filenames against allowlist. Check file permissions.",
+                            "source": "LFIMap",
+                        }
+                    )
+            except Exception as e:
+                utils.log_and_echo(f"Błąd uruchamiania LFIMap dla {url}: {e}", "DEBUG")
 
     return findings
 
@@ -306,64 +400,88 @@ def _orchestrate_sqlmap(
     limit = 3 if config.SAFE_MODE else 10
     targets_to_scan = targets[:limit]
 
-    for url in targets_to_scan:
-        # Sprawdzenie WAF przed uruchomieniem instancji SQLMap
-        if not _check_waf_and_sleep(waf_monitor, "SQLMap"):
-            continue
+    # Spinner dla SQLMap
+    with utils.console.status(
+        f"[bold green]SQLMap weryfikuje punkty iniekcji ({len(targets_to_scan)} celów)...[/bold green]",
+        spinner="simpleDots",
+    ):
+        for url in targets_to_scan:
+            # Sprawdzenie WAF przed uruchomieniem instancji SQLMap
+            if not _check_waf_and_sleep(waf_monitor, "SQLMap"):
+                continue
 
-        # Pobieranie skryptów tamper i nagłówków
-        tamper_scripts = waf_evasion.select_sqlmap_tamper_scripts()
-        headers = waf_evasion.get_random_browser_headers(url)
-        
-        command = [
-            "sqlmap",
-            "-u", url,
-            "--batch",
-            "--banner",
-            "--fail-fast", # Przerywa przy błędach połączenia
-            "--random-agent", # SQLMap ma swoją dobrą bazę agentów, ale można nadpisać
-            "--skip-waf", # Próba ominięcia heurystyk sprawdzających WAF (paradoksalnie pomaga)
-        ]
+            # Pobieranie skryptów tamper i nagłówków
+            tamper_scripts = waf_evasion.select_sqlmap_tamper_scripts()
+            # headers = waf_evasion.get_random_browser_headers(url) # Nieużywane w command build, ale w logice OK
 
-        # Konfiguracja Evasion
-        if tamper_scripts:
-            command.append(f"--tamper={','.join(tamper_scripts)}")
-        
-        if config.SAFE_MODE:
-            command.extend([
-                "--delay", str(config.REQUEST_DELAY_SAFE),
-                "--level", "1", 
-                "--risk", "1",
-                "--threads", "1",
-                "--timeout", "15"
-            ])
-        else:
-            command.extend([
-                "--delay", str(config.REQUEST_DELAY_NORMAL),
-                "--level", "2",
-                "--risk", "1"
-            ])
+            command = [
+                "sqlmap",
+                "-u",
+                url,
+                "--batch",
+                "--banner",
+                "--fail-fast",  # Przerywa przy błędach połączenia
+                "--random-agent",  # SQLMap ma swoją dobrą bazę agentów, ale można nadpisać
+                "--skip-waf",  # Próba ominięcia heurystyk sprawdzających WAF (paradoksalnie pomaga)
+            ]
 
-        # Katalog wyjściowy
-        sqlmap_out_dir = os.path.join(config.REPORT_DIR, "sqlmap_raw")
-        command.append(f"--output-dir={sqlmap_out_dir}")
+            # Konfiguracja Evasion
+            if tamper_scripts:
+                command.append(f"--tamper={','.join(tamper_scripts)}")
 
-        try:
-            process = subprocess.run(
-                command, capture_output=True, text=True, timeout=600
-            )
+            if config.SAFE_MODE:
+                command.extend(
+                    [
+                        "--delay",
+                        str(config.REQUEST_DELAY_SAFE),
+                        "--level",
+                        "1",
+                        "--risk",
+                        "1",
+                        "--threads",
+                        "1",
+                        "--timeout",
+                        "15",
+                    ]
+                )
+            else:
+                command.extend(
+                    [
+                        "--delay",
+                        str(config.REQUEST_DELAY_NORMAL),
+                        "--level",
+                        "2",
+                        "--risk",
+                        "1",
+                    ]
+                )
 
-            if "Place:" in process.stdout and "Parameter:" in process.stdout:
-                findings.append({
-                    "vulnerability": "SQL Injection",
-                    "severity": "critical",
-                    "target": url,
-                    "details": "SQLMap confirmed injection. Check output logs.",
-                    "remediation": "Use prepared statements.",
-                    "source": "SQLMap",
-                })
-        except subprocess.TimeoutExpired:
-            utils.log_and_echo(f"SQLMap timeout dla {url}", "WARN")
+            # Katalog wyjściowy
+            sqlmap_out_dir = os.path.join(config.REPORT_DIR, "sqlmap_raw")
+            command.append(f"--output-dir={sqlmap_out_dir}")
+
+            # NOWOŚĆ: Logowanie komendy
+            cmd_str = " ".join(command)
+            utils.log_and_echo(f"Komenda SQLMap: {cmd_str}", "INFO")
+
+            try:
+                process = subprocess.run(
+                    command, capture_output=True, text=True, timeout=600
+                )
+
+                if "Place:" in process.stdout and "Parameter:" in process.stdout:
+                    findings.append(
+                        {
+                            "vulnerability": "SQL Injection",
+                            "severity": "critical",
+                            "target": url,
+                            "details": "SQLMap confirmed injection. Check output logs.",
+                            "remediation": "Use prepared statements.",
+                            "source": "SQLMap",
+                        }
+                    )
+            except subprocess.TimeoutExpired:
+                utils.log_and_echo(f"SQLMap timeout dla {url}", "WARN")
 
     return findings
 
