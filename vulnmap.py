@@ -89,7 +89,7 @@ def show_settings_menu():
             "[bold cyan][2][/bold cyan]",
             f"Liczba wątków (Nuclei): [bold yellow]{config.NUCLEI_RATE_LIMIT_SAFE if config.SAFE_MODE else config.NUCLEI_RATE_LIMIT}[/bold yellow]",
         )
-        table.add_row("[bold cyan][q][/bold cyan]", "Wróć do menu głównego")
+        table.add_row("[bold cyan][\fq][/bold cyan]", "Wróć do menu głównego")
 
         utils.console.print(Align.center(table))
         utils.console.print("\n[dim]Wybierz opcję (kliknij klawisz)...[/dim]")
@@ -497,10 +497,10 @@ def display_main_menu_content():
     table.add_row("[bold cyan][1][/bold cyan]", "Faza 1: Skanowanie Pasywne")
     table.add_row("[bold cyan][2][/bold cyan]", "Faza 2: Aktywne Skanowanie Aplikacji")
     table.add_row("[bold cyan][3][/bold cyan]", "Faza 3: Skanowanie Infrastruktury")
-    table.add_row("[bold cyan][a][/bold cyan]", "Uruchom wszystkie fazy po kolei")
+    table.add_row("[bold cyan][\fa][/bold cyan]", "Uruchom wszystkie fazy po kolei")
     table.add_section()
-    table.add_row("[bold cyan][s][/bold cyan]", "Ustawienia skanowania")
-    table.add_row("[bold cyan][q][/bold cyan]", "Zapisz raporty i Wyjdź")
+    table.add_row("[bold cyan][\fs][/bold cyan]", "Ustawienia skanowania")
+    table.add_row("[bold cyan][\fq][/bold cyan]", "Zapisz raporty i Wyjdź")
 
     utils.console.print(Align.center(table))
     utils.console.print(Align.center("\n[dim]Wybierz opcję (kliknij klawisz)...[/dim]"))
