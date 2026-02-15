@@ -76,15 +76,15 @@ graph TD
     C -->|1| D[Phase 1: Passive Scan]
     C -->|2| E[Phase 2: Active App Scan]
     C -->|3| F[Phase 3: Infra Scan]
-    C -->|a| G[Full Automation 1->2->3]
+    C -->|a| G["Full Automation 1->2->3"]
 
     D --> H[Findings]
     E --> H
     F --> H
 
     H --> I[Generate Reports]
-    I --> J[📄 AI Summary (txt)]
-    I --> K[📊 Interactive HTML]
+    I --> J["📄 AI Summary (txt)"]
+    I --> K["📊 Interactive HTML"]
 ```
 
 ## 🧩 Modules & Tools
