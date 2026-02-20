@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Xzar-x/images/main/vulnmap.png" alt="ShadowMap Banner" width="700"/>
-</p>
-
 <div align="center">
 
 # 🕵️‍♂️ VulnMap
@@ -12,6 +8,9 @@
 [![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
 
 ---
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Xzar-x/images/main/vulnmap.png" alt="ShadowMap Banner" width="700"/>
+</p>
 
 **VulnMap** is a powerful, automated reconnaissance and vulnerability scanning framework designed to streamline the pentesting process. It intelligently categorizes assets, bypasses WAFs with smart rate-limiting, and generates AI-ready reports for further analysis.
 
