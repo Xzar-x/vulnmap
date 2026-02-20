@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Xzar-x/images/main/vulnmap.png" alt="ShadowMap Banner" width="700"/>
+</p>
+
 <div align="center">
 
 # 🕵️‍♂️ VulnMap
